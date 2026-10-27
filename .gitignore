@@ -1,3 +1,13 @@
-# Ejecutables generados al compilar
-/sistema_reserva_asientos
-/sistema_reserva_asientos.exe
+.venv/
+__pycache__/
+*.py[cod]
+build/
+dist/
+*.spec
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+coverage.xml
+cine_data.json
+*.egg-info/

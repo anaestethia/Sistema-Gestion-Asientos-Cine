@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sistema-gestion-asientos-cine"
+version = "1.0.0"
+description = "Aplicación de escritorio Tkinter para administrar salas y reservas de cine."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.optional-dependencies]
+build = ["pyinstaller>=6.14,<7"]
+dev = ["pytest>=8.0,<10", "ruff>=0.11,<1"]
+
+[project.scripts]
+cine-reservas = "cine_reservas.app:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]

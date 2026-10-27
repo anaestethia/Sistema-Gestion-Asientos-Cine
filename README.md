@@ -1,101 +1,81 @@
-# Sistema de Reserva de Asientos
+# Sistema de Gestión y Reserva de Cine
 
-Este proyecto implementa un sistema interactivo de reserva de asientos para una sala de cine o teatro, desarrollado en lenguaje C y orientado a consola (CLI). El programa permite visualizar la sala, reservar asientos disponibles y liberar asientos ocupados.
+Aplicación de escritorio multiplataforma, desarrollada en Python y Tkinter, para administrar salas de cine y gestionar reservas de asientos.
 
-## Características
+## Funcionalidades
 
-- Sala representada como una matriz de 5 filas por 8 columnas.
-- Los asientos libres se muestran como `[L]`.
-- Los asientos ocupados se muestran como `[X]`.
-- Menú interactivo en consola con las siguientes opciones:
-  1. Ver mapa de la sala.
-  2. Reservar asiento.
-  3. Liberar asiento.
-  4. Salir.
-- Validaciones de rango y disponibilidad.
-- Mensajes claros para confirmar acciones o informar errores.
-- Programación estructurada con funciones modularizadas.
-
-## Estructura del código
-
-El programa está dividido en funciones principales:
-
-- `inicializarSala`: crea la sala con todos los asientos libres.
-- `mostrarSala`: imprime el estado actual de la sala con índices.
-- `reservarAsiento`: valida y reserva un asiento disponible.
-- `liberarAsiento`: valida y libera un asiento ocupado.
-- `main`: controla el menú principal y la lógica general del programa.
+- Mapa visual e interactivo con pantalla, filas y columnas.
+- Reservar asientos disponibles con número de ticket.
+- Consultar y liberar reservas existentes.
+- Crear salas y editar película, filas y asientos por fila.
+- Evitar reducciones de sala que eliminarían asientos reservados.
+- Persistencia automática en JSON y validación de los datos al cargar.
+- Ejecutable independiente para Windows mediante PyInstaller.
 
 ## Requisitos
 
-- Compilador de C (por ejemplo, GCC).
-- Sistema operativo con consola o terminal.
+- Python 3.10 o posterior.
+- Tkinter, incluido en las instalaciones estándar de Python para Windows y macOS. En Linux puede requerir el paquete del sistema `python3-tk`.
 
-## Compilación
+## Ejecutar desde el código fuente
 
-Ejecuta el siguiente comando desde la carpeta del proyecto:
+Desde la carpeta del proyecto:
 
-```bash
-gcc -std=c11 -Wall -Wextra -pedantic sistema_reserva_asientos.c -o sistema_reserva_asientos
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -e .
+python -m cine_reservas
 ```
 
-Si el compilador no está instalado en Ubuntu/Debian, puedes instalarlo con:
+En Linux o macOS, activa el entorno con `source .venv/bin/activate`. También puedes iniciar la versión fuente en Windows haciendo doble clic en `ejecutar.bat`.
 
-```bash
-sudo apt update
-sudo apt install build-essential
+La aplicación no necesita paquetes de terceros para funcionar desde Python. La primera ejecución crea `cine_data.json` con una sala de ejemplo.
+
+## Ejecutar pruebas y lint
+
+Instala las herramientas de desarrollo y ejecuta las validaciones:
+
+```powershell
+python -m pip install -e ".[dev]"
+ruff check .
+pytest
 ```
 
-## Ejecución
+La integración continua ejecuta lint y pruebas en Windows y Ubuntu, con Python 3.10, 3.12 y 3.13.
 
-En Linux y macOS:
+## Crear el ejecutable de Windows
 
-```bash
-./sistema_reserva_asientos
+Con Python instalado, ejecuta desde PowerShell:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\build.ps1
 ```
 
-En Windows (con GCC/MinGW), compila con:
+El script instala PyInstaller dentro del entorno virtual y produce `dist\GestionAsientosCine.exe`. La primera compilación requiere conexión a Internet. El ejecutable no requiere que Python esté instalado en el equipo de destino.
 
-```bash
-gcc -std=c11 -Wall -Wextra -pedantic sistema_reserva_asientos.c -o sistema_reserva_asientos.exe
-```
+Inicia el ejecutable haciendo doble clic o con `ejecutar.bat`.
 
-Y luego inicia el programa con:
+## Datos y copias de seguridad
+
+La aplicación guarda salas y reservas en `cine_data.json`, junto al directorio del proyecto en modo fuente o junto al ejecutable dentro de `dist`. El JSON se excluye de Git para no publicar datos locales. Conserva una copia de ese archivo para respaldar las reservas.
+
+## Estructura del proyecto
 
 ```text
-sistema_reserva_asientos.exe
+.
+├── .github/workflows/ci.yml
+├── launcher.py
+├── pyproject.toml
+├── src/cine_reservas/
+│   ├── __init__.py
+│   ├── __main__.py
+│   ├── app.py
+│   └── data_store.py
+└── tests/
+    └── test_data_store.py
 ```
 
-## Uso
+## Límites de configuración
 
-Al ejecutar el programa aparecerá un menú con las opciones disponibles. Puedes:
-
-- ver el mapa completo de la sala,
-- seleccionar una fila y columna para reservar un asiento,
-- liberar un asiento previamente ocupado,
-- o salir del sistema.
-
-Los números deben ingresarse como enteros. Si se recibe una entrada inválida o se termina la entrada estándar, el programa informa el problema y permite reintentar o finaliza ordenadamente.
-
-## Ejemplo de salida
-
-```text
-===== SISTEMA DE RESERVA DE ASIENTOS =====
-1. Ver mapa de la sala
-2. Reservar asiento
-3. Liberar asiento
-4. Salir
-========================================
-Seleccione una opción: 1
-
-==============================
-     MAPA DE LA SALA
-==============================
-      1   2   3   4   5   6   7   8
-Fila  1 | [L] [L] [L] [L] [L] [L] [L] [L]
-...
-```
-
-## Nota
-
-Este proyecto usa únicamente las librerías estándar `stdio.h` y `stdlib.h`. Las reservas se mantienen en memoria mientras el programa está abierto; al cerrarlo, todos los asientos vuelven a estar libres.
+Cada sala permite entre 1 y 30 filas y entre 1 y 30 asientos por fila. Una sala no se puede reducir si conserva reservas fuera de las nuevas dimensiones.
