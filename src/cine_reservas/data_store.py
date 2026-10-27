@@ -155,5 +155,20 @@ class CineDataStore:
             self.data = old_data
             raise
 
+    def set_reservations(self, room_id: str, reservations: dict[str, dict[str, str]]) -> None:
+        room = self.get_room(room_id)
+        if room is None:
+            raise ValueError("La sala seleccionada ya no existe.")
+        occupied = room["reservas"].keys() & reservations.keys()
+        if occupied:
+            raise ValueError(f"El asiento '{next(iter(occupied))}' ya está reservado.")
+        old_data = copy.deepcopy(self.data)
+        room["reservas"].update(reservations)
+        try:
+            self.save()
+        except OSError:
+            self.data = old_data
+            raise
+
     def get_room(self, room_id: str | None) -> dict[str, Any] | None:
         return next((room for room in self.data["salas"] if room["id"] == room_id), None)

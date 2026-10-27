@@ -40,6 +40,35 @@ def test_room_and_reservation_changes_survive_reload(tmp_path):
     assert CineDataStore(path).get_room("SALA-2")["reservas"] == {}
 
 
+def test_multiple_reservations_are_saved_together_and_occupied_seats_are_preserved(
+    tmp_path,
+):
+    store = CineDataStore(tmp_path / "cine_data.json")
+    room_id = store.data["salas"][0]["id"]
+
+    store.set_reservations(
+        room_id,
+        {
+            "0_0": {"ticket": "T-1001", "usuario": ""},
+            "0_1": {"ticket": "T-1001", "usuario": ""},
+        },
+    )
+
+    with pytest.raises(ValueError, match="ya está reservado"):
+        store.set_reservations(
+            room_id,
+            {
+                "0_1": {"ticket": "T-2002", "usuario": ""},
+                "0_2": {"ticket": "T-2002", "usuario": ""},
+            },
+        )
+
+    reservations = CineDataStore(store.path).get_room(room_id)["reservas"]
+    assert reservations["0_0"]["ticket"] == "T-1001"
+    assert reservations["0_1"]["ticket"] == "T-1001"
+    assert "0_2" not in reservations
+
+
 def test_rejects_malformed_json(tmp_path):
     path = tmp_path / "cine_data.json"
     path.write_text("{", encoding="utf-8")

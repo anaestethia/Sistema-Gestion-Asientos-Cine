@@ -5,8 +5,9 @@ Aplicación de escritorio multiplataforma, desarrollada en Python y Tkinter, par
 ## Funcionalidades
 
 - Mapa visual e interactivo con pantalla, filas y columnas.
-- Reservar asientos disponibles con número de ticket.
-- Consultar y liberar reservas existentes.
+- Selección de varios asientos y reserva con número de entrada.
+- Consulta y liberación de reservas existentes.
+- Panel oscuro con disponibilidad en tiempo real, resumen de sala y registro de actividad.
 - Crear salas y editar película, filas y asientos por fila.
 - Evitar reducciones de sala que eliminarían asientos reservados.
 - Persistencia automática en JSON y validación de los datos al cargar.
@@ -31,6 +32,8 @@ python -m cine_reservas
 En Linux o macOS, activa el entorno con `source .venv/bin/activate`. También puedes iniciar la versión fuente en Windows haciendo doble clic en `ejecutar.bat`.
 
 La aplicación no necesita paquetes de terceros para funcionar desde Python. La primera ejecución crea `cine_data.json` con una sala de ejemplo.
+
+La interfaz ofrece las secciones **Asientos**, **Reservas** y **Actividad**. Selecciona uno o varios asientos verdes y confirma la reserva con un número de entrada; ese número se asigna a todos los asientos seleccionados. Los asientos ocupados se identifican en rojo y permiten consultar o liberar la reserva.
 
 ## Ejecutar pruebas y lint
 
