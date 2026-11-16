@@ -1,6 +1,6 @@
 # Sistema de Gestión y Reserva de Cine
 
-Aplicación de escritorio multiplataforma, desarrollada en Python y Tkinter, para administrar salas de cine y gestionar reservas de asientos.
+Aplicación de escritorio multiplataforma, desarrollada en Python y Tkinter, para administrar salas de cine y gestionar reservas de asientos. Está implementada con **programación estructurada**, mediante funciones y estado explícito en diccionarios; el código de la aplicación no define clases.
 
 ## Funcionalidades
 
@@ -78,6 +78,8 @@ La aplicación guarda salas y reservas en `cine_data.json`, junto al directorio 
 └── tests/
     └── test_data_store.py
 ```
+
+La interfaz está organizada en funciones dentro de `app.py`. `data_store.py` contiene las funciones de validación y persistencia. El estado compartido de la interfaz y del almacenamiento se pasa explícitamente como diccionario.
 
 ## Límites de configuración
 
