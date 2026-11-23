@@ -10,4 +10,7 @@ dist/
 htmlcov/
 coverage.xml
 cine_data.json
+cine_data.db
+*.sqlite
+*.sqlite3
 *.egg-info/

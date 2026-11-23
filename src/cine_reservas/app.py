@@ -8,8 +8,10 @@ from tkinter import messagebox, ttk
 from .data_store import (
     MAX_ASIENTOS_POR_FILA,
     MAX_FILAS,
+    clear_room_reservations,
     create_store,
     get_room,
+    list_rooms,
     set_reservation,
     set_reservations,
     update_room,
@@ -53,7 +55,7 @@ def create_app(root, data_path=None):
             if getattr(sys, "frozen", False)
             else Path(__file__).resolve().parents[2]
         )
-        app["data_path"] = app_directory / "cine_data.json"
+        app["data_path"] = app_directory / "cine_data.db"
     try:
         app["store"] = create_store(app["data_path"])
     except (OSError, ValueError) as error:
@@ -61,9 +63,8 @@ def create_app(root, data_path=None):
         app["closed"] = True
         root.destroy()
         return app
-    app["active_room_id"] = (
-        app["store"]["data"]["salas"][0]["id"] if app["store"]["data"]["salas"] else None
-    )
+    rooms = list_rooms(app["store"])
+    app["active_room_id"] = rooms[0]["id"] if rooms else None
     app["room_ids_by_label"] = {}
     app["selected_seats"] = set()
     app["current_view"] = "asientos"
@@ -436,7 +437,7 @@ def draw_availability(app, _event=None):
     if room is None:
         return
     width = app["availability_bar"].winfo_width()
-    total = room["filas"] * room["asientos_por_fila"]
+    total = int(room.get("total_asientos") or sum(r["asientos"] for r in room["filas_config"]))
     occupied = len(room["reservas"])
     occupied_width = width * occupied / total if total else 0
     app["availability_bar"].create_rectangle(
@@ -524,6 +525,14 @@ def build_seat_view(app):
         primary=True,
     )
     app["reserve_button"].grid(row=0, column=2)
+    app["clear_room_button"] = button(
+        app,
+        selection_bar,
+        "Limpiar sala",
+        lambda *_args: clear_room_reservations_action(app, *_args),
+        compact=True,
+    )
+    app["clear_room_button"].grid(row=0, column=3, padx=(6, 0))
     legend = tk.Frame(app["map_card"], bg=COLORS["surface"])
     legend.grid(row=3, column=0, sticky="ew", pady=(10, 0))
     legend_item(app, legend, COLORS["green"], "Disponible").pack(side="left", padx=(0, 16))
@@ -692,7 +701,8 @@ def update_scroll_region(app, _event=None):
 def refresh_rooms(app):
     app["room_ids_by_label"].clear()
     labels = []
-    for room in app["store"]["data"]["salas"]:
+    rooms = list_rooms(app["store"])
+    for room in rooms:
         label = f"{room['id']}  ·  {room['nombre']}"
         labels.append(label)
         app["room_ids_by_label"][label] = room["id"]
@@ -712,7 +722,7 @@ def refresh_rooms(app):
     else:
         app["active_room_id"] = None
         app["room_combo"].set("")
-    app["room_count_label"].configure(text=f"{len(app['store']['data']['salas']):02d} SALA(S)")
+    app["room_count_label"].configure(text=f"{len(rooms):02d} SALA(S)")
     refresh_reservations(app)
     render_room(app)
 
@@ -720,16 +730,16 @@ def refresh_rooms(app):
 def refresh_reservations(app):
     for item in app["reservations_table"].get_children():
         app["reservations_table"].delete(item)
-    for room in app["store"]["data"]["salas"]:
-        if room["id"] != app["active_room_id"]:
-            continue
-        for position, reservation in sorted(room["reservas"].items()):
-            row, seat = map(int, position.split("_"))
-            app["reservations_table"].insert(
-                "",
-                tk.END,
-                values=(f"F{row + 1}", f"C{seat + 1}", reservation["ticket"], room["nombre"]),
-            )
+    room = get_room(app["store"], app["active_room_id"]) if app["active_room_id"] else None
+    if room is None:
+        return
+    for position, reservation in sorted(room["reservas"].items()):
+        row, seat = map(int, position.split("_"))
+        app["reservations_table"].insert(
+            "",
+            tk.END,
+            values=(f"F{row + 1}", f"C{seat + 1}", reservation["ticket"], room["nombre"]),
+        )
 
 
 def on_room_selected(app, _event=None):
@@ -737,6 +747,113 @@ def on_room_selected(app, _event=None):
     app["selected_seats"].clear()
     render_room(app)
     refresh_reservations(app)
+
+
+def _room_layout_payload(room):
+    return {
+        "nombre": room["nombre"],
+        "pelicula": room["pelicula"],
+        "filas_config": [
+            {"id_fila": row["id_fila"], "asientos": int(row["asientos"])}
+            for row in room.get("filas_config", [])
+        ],
+    }
+
+
+def _apply_room_layout_change(app, room, filas_config, activity=None):
+    try:
+        update_room(
+            app["store"],
+            room["id"],
+            {
+                "nombre": room["nombre"],
+                "pelicula": room["pelicula"],
+                "filas_config": filas_config,
+            },
+        )
+    except (OSError, ValueError) as error:
+        messagebox.showerror("No se pudo modificar la sala", str(error), parent=app["root"])
+        return
+    if activity:
+        record_activity(app, activity)
+    refresh_rooms(app)
+
+
+def add_seat_to_row(app, row_index):
+    room = get_room(app["store"], app["active_room_id"]) if app["active_room_id"] else None
+    if room is None:
+        return
+    layout = _room_layout_payload(room)["filas_config"]
+    if row_index < 0 or row_index >= len(layout):
+        return
+    if layout[row_index]["asientos"] >= MAX_ASIENTOS_POR_FILA:
+        messagebox.showinfo(
+            "L?mite de asientos",
+            f"Cada fila permite como m?ximo {MAX_ASIENTOS_POR_FILA} asientos.",
+            parent=app["root"],
+        )
+        return
+    layout[row_index]["asientos"] += 1
+    _apply_room_layout_change(
+        app, room, layout, f"Asiento agregado en F{row_index + 1:02d} ? {room['nombre']}"
+    )
+
+
+def remove_seat_from_row(app, row_index):
+    room = get_room(app["store"], app["active_room_id"]) if app["active_room_id"] else None
+    if room is None:
+        return
+    layout = _room_layout_payload(room)["filas_config"]
+    if row_index < 0 or row_index >= len(layout):
+        return
+    if layout[row_index]["asientos"] <= 1:
+        messagebox.showinfo(
+            "L?mite de asientos",
+            "Cada fila debe tener al menos 1 asiento.",
+            parent=app["root"],
+        )
+        return
+    layout[row_index]["asientos"] -= 1
+    _apply_room_layout_change(
+        app, room, layout, f"Asiento quitado en F{row_index + 1:02d} ? {room['nombre']}"
+    )
+
+
+def add_row_end(app):
+    room = get_room(app["store"], app["active_room_id"]) if app["active_room_id"] else None
+    if room is None:
+        return
+    layout = _room_layout_payload(room)["filas_config"]
+    if len(layout) >= MAX_FILAS:
+        messagebox.showinfo(
+            "L?mite de filas",
+            f"La sala permite como m?ximo {MAX_FILAS} filas.",
+            parent=app["root"],
+        )
+        return
+    default_seats = layout[-1]["asientos"] if layout else 8
+    layout.append({"id_fila": None, "asientos": int(default_seats)})
+    _apply_room_layout_change(app, room, layout, f"Fila agregada ? {room['nombre']}")
+
+
+def remove_row(app, row_index):
+    room = get_room(app["store"], app["active_room_id"]) if app["active_room_id"] else None
+    if room is None:
+        return
+    layout = _room_layout_payload(room)["filas_config"]
+    if row_index < 0 or row_index >= len(layout):
+        return
+    if len(layout) <= 1:
+        messagebox.showinfo(
+            "L?mite de filas",
+            "La sala debe tener al menos una fila.",
+            parent=app["root"],
+        )
+        return
+    layout.pop(row_index)
+    _apply_room_layout_change(
+        app, room, layout, f"Fila F{row_index + 1:02d} quitada ? {room['nombre']}"
+    )
 
 
 def render_room(app):
@@ -751,45 +868,71 @@ def render_room(app):
         draw_poster(app)
         draw_availability(app)
         return
-    total = room["filas"] * room["asientos_por_fila"]
+
+    filas_config = room.get("filas_config") or []
+    seat_counts = [int(row["asientos"]) for row in filas_config]
+    total = int(room.get("total_asientos") or sum(seat_counts))
     occupied = len(room["reservas"])
-    selected = sum(
-        (
-            1
-            for row, seat in app["selected_seats"]
-            if f"{row}_{seat}" not in room["reservas"]
-            and row < room["filas"]
-            and (seat < room["asientos_por_fila"])
+    selected = 0
+    for row, seat in list(app["selected_seats"]):
+        if row < len(seat_counts) and seat < seat_counts[row]:
+            if f"{row}_{seat}" not in room["reservas"]:
+                selected += 1
+    available = total - occupied
+    formato = "Formato est?ndar" if len(set(seat_counts)) <= 1 else "Formato variable"
+    app["capacity_label"].configure(text=f"{total} asientos  ?  {formato}")
+    app["map_subtitle"].configure(
+        text=(
+            f"{room['nombre']}  ?  Funci?n de hoy, 19:30  ?  "
+            "Usa +/? al final de cada fila para ajustar asientos"
         )
     )
-    available = total - occupied
-    app["capacity_label"].configure(text=f"{total} asientos  ·  Formato estándar")
-    app["map_subtitle"].configure(text=f"{room['nombre']}  ·  Función de hoy, 19:30")
-    app["dimensions_badge"].configure(
-        text=f"{room['filas']} FILAS  ×  {room['asientos_por_fila']} COLUMNAS"
-    )
+    if seat_counts and len(set(seat_counts)) == 1:
+        badge = f"{len(seat_counts)} FILAS  ?  {seat_counts[0]} ASIENTOS"
+    elif seat_counts:
+        badge = f"{len(seat_counts)} FILAS  ?  {min(seat_counts)}-{max(seat_counts)} ASIENTOS"
+    else:
+        badge = "SIN FILAS"
+    app["dimensions_badge"].configure(text=badge)
     update_metrics(app, available, selected, occupied)
     draw_poster(app)
-    columns = room["asientos_por_fila"]
+
+    max_columns = max(seat_counts) if seat_counts else 0
     label(app, app["seat_grid"], "", size=7, color=COLORS["muted"]).grid(
         row=0, column=0, padx=(0, 8)
     )
-    for column in range(columns):
+    for column in range(max_columns):
         label(app, app["seat_grid"], f"C{column + 1:02d}", size=7, color=COLORS["muted"]).grid(
             row=0, column=column + 1, padx=4, pady=(0, 8)
         )
+    label(app, app["seat_grid"], "AJUSTES", size=7, color=COLORS["muted"]).grid(
+        row=0, column=max_columns + 1, padx=(10, 4), pady=(0, 8), sticky="w"
+    )
     app["seat_buttons"] = {}
-    for row in range(room["filas"]):
-        label(app, app["seat_grid"], f"F{row + 1:02d}", size=8, color=COLORS["muted"]).grid(
-            row=row + 1, column=0, padx=(0, 8), pady=4, sticky="e"
-        )
-        for seat in range(columns):
-            position = f"{row}_{seat}"
+    for row_index, row_info in enumerate(filas_config):
+        row_seats = int(row_info["asientos"])
+        offset = (max_columns - row_seats) // 2
+        label(
+            app,
+            app["seat_grid"],
+            f"F{row_index + 1:02d}",
+            size=8,
+            color=COLORS["muted"],
+        ).grid(row=row_index + 1, column=0, padx=(0, 8), pady=4, sticky="e")
+        for seat in range(row_seats):
+            position = f"{row_index}_{seat}"
             reservation = room["reservas"].get(position)
-            is_selected = (row, seat) in app["selected_seats"] and (not reservation)
-            color = OCCUPIED_COLOR if reservation else SELECTED_COLOR if is_selected else FREE_COLOR
-            foreground = "#ff8aa8" if reservation else "#a9c5ff" if is_selected else "#78e4c4"
-            button = tk.Button(
+            is_selected = (row_index, seat) in app["selected_seats"] and not reservation
+            if reservation:
+                color = OCCUPIED_COLOR
+                foreground = "#ff8aa8"
+            elif is_selected:
+                color = SELECTED_COLOR
+                foreground = "#a9c5ff"
+            else:
+                color = FREE_COLOR
+                foreground = "#78e4c4"
+            seat_button = tk.Button(
                 app["seat_grid"],
                 text=f"{seat + 1:02d}",
                 width=4,
@@ -803,14 +946,76 @@ def render_room(app):
                 activeforeground="white",
                 font=("Segoe UI", 8, "bold"),
                 cursor="hand2",
-                command=lambda r=row, s=seat: on_seat_click(app, r, s),
+                command=lambda r=row_index, s=seat: on_seat_click(app, r, s),
             )
-            button.grid(row=row + 1, column=seat + 1, padx=3, pady=3)
-            app["seat_buttons"][row, seat] = button
+            seat_button.grid(row=row_index + 1, column=offset + seat + 1, padx=3, pady=3)
+            app["seat_buttons"][row_index, seat] = seat_button
+
+        controls = tk.Frame(app["seat_grid"], bg=COLORS["surface"])
+        controls.grid(row=row_index + 1, column=max_columns + 1, padx=(10, 4), pady=3, sticky="w")
+        for text, command, bg, fg in (
+            (
+                "-",
+                lambda r=row_index: remove_seat_from_row(app, r),
+                COLORS["surface_alt"],
+                COLORS["text"],
+            ),
+            (
+                "+",
+                lambda r=row_index: add_seat_to_row(app, r),
+                COLORS["surface_alt"],
+                COLORS["text"],
+            ),
+            (
+                "Quitar fila",
+                lambda r=row_index: remove_row(app, r),
+                "#3a1f2a",
+                "#ff8aa8",
+            ),
+        ):
+            tk.Button(
+                controls,
+                text=text,
+                command=command,
+                relief="flat",
+                borderwidth=0,
+                padx=8 if text != "Quitar fila" else 10,
+                pady=4,
+                background=bg,
+                foreground=fg,
+                activebackground=COLORS["border"],
+                activeforeground="white",
+                font=("Segoe UI", 8, "bold"),
+                cursor="hand2",
+            ).pack(side="left", padx=2)
+
+    add_row = tk.Button(
+        app["seat_grid"],
+        text="+ Agregar fila",
+        command=lambda: add_row_end(app),
+        relief="flat",
+        borderwidth=0,
+        padx=12,
+        pady=6,
+        background=COLORS["surface_alt"],
+        foreground=COLORS["green"],
+        activebackground=COLORS["border"],
+        activeforeground="white",
+        font=("Segoe UI", 9, "bold"),
+        cursor="hand2",
+    )
+    add_row.grid(
+        row=len(filas_config) + 1,
+        column=1,
+        columnspan=max(2, max_columns),
+        pady=(14, 4),
+        sticky="w",
+    )
+
     app["selection_summary"].configure(
         text=(
-            f"{selected} asiento(s) seleccionado(s)  ·  "
-            "el mismo número de entrada se asignará a todos"
+            f"{selected} asiento(s) seleccionado(s)  ?  "
+            "el mismo n?mero de entrada se asignar? a todos"
         )
         if selected
         else "Selecciona uno o varios asientos disponibles",
@@ -818,6 +1023,8 @@ def render_room(app):
     )
     app["reserve_button"].configure(state="normal" if selected else "disabled")
     app["clear_selection_button"].configure(state="normal" if selected else "disabled")
+    if "clear_room_button" in app:
+        app["clear_room_button"].configure(state="normal" if occupied > 0 else "disabled")
     app["seat_grid"].update_idletasks()
     update_scroll_region(app)
     draw_availability(app)
@@ -849,6 +1056,38 @@ def on_seat_click(app, row, seat):
 def clear_selection(app):
     app["selected_seats"].clear()
     render_room(app)
+
+
+def clear_room_reservations_action(app):
+    room = get_room(app["store"], app["active_room_id"]) if app["active_room_id"] else None
+    if room is None:
+        return
+    if not room["reservas"]:
+        messagebox.showinfo(
+            "Limpiar sala",
+            "No hay asientos ocupados en esta sala.",
+            parent=app["root"],
+        )
+        return
+    confirmed = messagebox.askyesno(
+        "Limpiar sala",
+        f"¿Deseas liberar todos los asientos ocupados de {room['nombre']}?\n\n"
+        "Esta acción quitará todas las reservas de la sala.",
+        parent=app["root"],
+    )
+    if not confirmed:
+        return
+    try:
+        cleared = clear_room_reservations(app["store"], room["id"])
+    except (OSError, ValueError) as error:
+        messagebox.showerror("No se pudo limpiar la sala", str(error), parent=app["root"])
+        return
+    app["selected_seats"].clear()
+    record_activity(
+        app,
+        f"Sala limpiada · {cleared} asiento(s) liberado(s) · {room['nombre']}",
+    )
+    refresh_rooms(app)
 
 
 def reserve_selected(app):
@@ -987,10 +1226,9 @@ def add_room(app):
     values = room_dialog(app, "Agregar sala")
     if values is None:
         return
+    rooms = list_rooms(app["store"])
     numbers = [
-        int(match.group(1))
-        for room in app["store"]["data"]["salas"]
-        if (match := re.fullmatch("SALA-(\\d+)", room["id"]))
+        int(match.group(1)) for room in rooms if (match := re.fullmatch(r"SALA-(\d+)", room["id"]))
     ]
     room_id = f"SALA-{max(numbers, default=0) + 1}"
     room = {"id": room_id, **values, "reservas": {}}
@@ -1000,7 +1238,7 @@ def add_room(app):
         messagebox.showerror("Error al agregar sala", str(error), parent=app["root"])
         return
     app["active_room_id"] = room_id
-    record_activity(app, f"Sala agregada · {values['nombre']}")
+    record_activity(app, f"Sala agregada ? {values['nombre']}")
     refresh_rooms(app)
 
 
@@ -1014,27 +1252,12 @@ def edit_room(app):
     values = room_dialog(app, "Editar sala", room)
     if values is None:
         return
-    removed = []
-    for position in room["reservas"]:
-        row, seat = map(int, position.split("_"))
-        if row >= values["filas"] or seat >= values["asientos_por_fila"]:
-            removed.append(position)
-    if removed:
-        messagebox.showwarning(
-            "No se puede reducir la sala",
-            (
-                f"Hay {len(removed)} reserva(s) en asientos que quedarían fuera "
-                "de las nuevas dimensiones. Libere esos asientos antes de reducir la sala."
-            ),
-            parent=app["root"],
-        )
-        return
     try:
         update_room(app["store"], room["id"], values)
     except (OSError, ValueError) as error:
         messagebox.showerror("Error al editar sala", str(error), parent=app["root"])
         return
-    record_activity(app, f"Configuración actualizada · {room['nombre']}")
+    record_activity(app, f"Configuraci?n actualizada ? {room['nombre']}")
     refresh_rooms(app)
 
 
@@ -1043,71 +1266,170 @@ def room_dialog(app, title, room=None):
     dialog.title(title)
     dialog.configure(bg=COLORS["background"])
     dialog.transient(app["root"])
-    dialog.resizable(False, False)
+    dialog.resizable(True, True)
     dialog.grab_set()
+    dialog.geometry("560x520")
+
     frame = ttk.Frame(dialog, padding=16)
-    frame.grid(row=0, column=0, sticky="nsew")
-    fields = (
-        ("Nombre de la sala", "nombre", room["nombre"] if room else ""),
-        ("Película asignada", "pelicula", room["pelicula"] if room else ""),
-        ("Cantidad de filas (1–30)", "filas", str(room["filas"] if room else 5)),
-        (
-            "Asientos por fila (1–30)",
-            "asientos_por_fila",
-            str(room["asientos_por_fila"] if room else 8),
-        ),
+    frame.pack(fill="both", expand=True)
+    frame.columnconfigure(0, weight=1)
+    frame.rowconfigure(4, weight=1)
+
+    ttk.Label(frame, text="Nombre de la sala").grid(row=0, column=0, sticky="w", pady=(0, 4))
+    name_entry = ttk.Entry(frame)
+    name_entry.grid(row=1, column=0, sticky="ew", pady=(0, 10))
+    name_entry.insert(0, room["nombre"] if room else "")
+
+    ttk.Label(frame, text="Pel?cula asignada").grid(row=2, column=0, sticky="w", pady=(0, 4))
+    movie_entry = ttk.Entry(frame)
+    movie_entry.grid(row=3, column=0, sticky="ew", pady=(0, 12))
+    movie_entry.insert(0, room["pelicula"] if room else "")
+
+    editor = ttk.LabelFrame(frame, text="Filas de la sala (configuraci?n particular)")
+    editor.grid(row=4, column=0, sticky="nsew")
+    editor.columnconfigure(0, weight=1)
+    editor.rowconfigure(0, weight=1)
+
+    columns = ("fila", "asientos")
+    tree = ttk.Treeview(editor, columns=columns, show="headings", height=10, style="Dark.Treeview")
+    tree.heading("fila", text="FILA")
+    tree.heading("asientos", text="ASIENTOS")
+    tree.column("fila", width=140, anchor="w")
+    tree.column("asientos", width=140, anchor="w")
+    tree.grid(row=0, column=0, sticky="nsew", padx=(10, 0), pady=10)
+    scroll = ttk.Scrollbar(
+        editor, orient="vertical", command=tree.yview, style="Dark.Vertical.TScrollbar"
     )
-    entries = {}
-    for index, (label, key, initial) in enumerate(fields):
-        ttk.Label(frame, text=label).grid(row=index, column=0, sticky="w", pady=5)
-        entry = ttk.Entry(frame, width=32)
-        entry.insert(0, initial)
-        entry.grid(row=index, column=1, padx=(12, 0), pady=5)
-        entries[key] = entry
+    scroll.grid(row=0, column=1, sticky="ns", pady=10, padx=(0, 10))
+    tree.configure(yscrollcommand=scroll.set)
+
+    controls = ttk.Frame(editor)
+    controls.grid(row=1, column=0, columnspan=2, sticky="ew", padx=10, pady=(0, 10))
+    ttk.Label(controls, text="Asientos de la fila (1?30):").pack(side="left")
+    seats_var = tk.StringVar(value="8")
+    seats_spin = tk.Spinbox(
+        controls, from_=1, to=MAX_ASIENTOS_POR_FILA, width=6, textvariable=seats_var
+    )
+    seats_spin.pack(side="left", padx=(8, 12))
+
+    row_state = {"rows": []}
+
+    def refresh_tree():
+        for item in tree.get_children():
+            tree.delete(item)
+        for index, row in enumerate(row_state["rows"], start=1):
+            tree.insert("", tk.END, iid=str(index - 1), values=(f"F{index:02d}", row["asientos"]))
+
+    def read_seats():
+        try:
+            value = int(seats_var.get().strip())
+        except ValueError:
+            return None
+        if not 1 <= value <= MAX_ASIENTOS_POR_FILA:
+            return None
+        return value
+
+    def add_row():
+        if len(row_state["rows"]) >= MAX_FILAS:
+            messagebox.showwarning(
+                "L?mite de filas",
+                f"La sala permite como m?ximo {MAX_FILAS} filas.",
+                parent=dialog,
+            )
+            return
+        seats = read_seats()
+        if seats is None:
+            messagebox.showwarning(
+                "Valor inv?lido",
+                "Ingresa una cantidad de asientos entre 1 y 30.",
+                parent=dialog,
+            )
+            return
+        row_state["rows"].append({"id_fila": None, "asientos": seats})
+        refresh_tree()
+        tree.selection_set(str(len(row_state["rows"]) - 1))
+
+    def change_row():
+        selection = tree.selection()
+        if not selection:
+            messagebox.showinfo(
+                "Selecciona una fila", "Elige la fila que deseas cambiar.", parent=dialog
+            )
+            return
+        seats = read_seats()
+        if seats is None:
+            messagebox.showwarning(
+                "Valor inv?lido",
+                "Ingresa una cantidad de asientos entre 1 y 30.",
+                parent=dialog,
+            )
+            return
+        index = int(selection[0])
+        row_state["rows"][index]["asientos"] = seats
+        refresh_tree()
+        tree.selection_set(str(index))
+
+    def remove_row():
+        selection = tree.selection()
+        if not selection:
+            messagebox.showinfo(
+                "Selecciona una fila", "Elige la fila que deseas quitar.", parent=dialog
+            )
+            return
+        index = int(selection[0])
+        row_state["rows"].pop(index)
+        refresh_tree()
+
+    buttons = ttk.Frame(editor)
+    buttons.grid(row=2, column=0, columnspan=2, sticky="ew", padx=10, pady=(0, 10))
+    ttk.Button(buttons, text="Agregar fila al final", command=add_row).pack(
+        side="left", padx=(0, 6)
+    )
+    ttk.Button(buttons, text="Cambiar asientos", command=change_row).pack(side="left", padx=6)
+    ttk.Button(buttons, text="Quitar fila seleccionada", command=remove_row).pack(
+        side="left", padx=6
+    )
+
+    initial_rows = (
+        [{"id_fila": r["id_fila"], "asientos": int(r["asientos"])} for r in room["filas_config"]]
+        if room and room.get("filas_config")
+        else [{"id_fila": None, "asientos": 8} for _ in range(5)]
+    )
+    row_state["rows"] = initial_rows
+    refresh_tree()
+
     result = {"value": None}
 
     def submit():
-        name = entries["nombre"].get().strip()
-        movie = entries["pelicula"].get().strip()
+        name = name_entry.get().strip()
+        movie = movie_entry.get().strip()
         if not name or not movie:
             messagebox.showwarning(
                 "Datos obligatorios",
-                "El nombre de la sala y la película son obligatorios.",
+                "El nombre de la sala y la pel?cula son obligatorios.",
                 parent=dialog,
             )
             return
-        try:
-            rows = int(entries["filas"].get().strip())
-            seats = int(entries["asientos_por_fila"].get().strip())
-        except ValueError:
+        if not row_state["rows"]:
             messagebox.showwarning(
-                "Dimensiones inválidas",
-                "Filas y asientos por fila deben ser números enteros.",
-                parent=dialog,
-            )
-            return
-        if not 1 <= rows <= MAX_FILAS or not 1 <= seats <= MAX_ASIENTOS_POR_FILA:
-            messagebox.showwarning(
-                "Dimensiones inválidas",
-                "Las filas y los asientos por fila deben estar entre 1 y 30.",
+                "Configuraci?n inv?lida",
+                "La sala debe tener al menos una fila.",
                 parent=dialog,
             )
             return
         result["value"] = {
             "nombre": name,
             "pelicula": movie,
-            "filas": rows,
-            "asientos_por_fila": seats,
+            "filas_config": [dict(row) for row in row_state["rows"]],
         }
         dialog.destroy()
 
-    buttons = ttk.Frame(frame)
-    buttons.grid(row=len(fields), column=0, columnspan=2, sticky="e", pady=(12, 0))
-    ttk.Button(buttons, text="Cancelar", command=dialog.destroy).grid(row=0, column=0, padx=4)
-    ttk.Button(buttons, text="Guardar", command=submit).grid(row=0, column=1, padx=4)
-    dialog.bind("<Return>", lambda _event: submit())
+    footer = ttk.Frame(frame)
+    footer.grid(row=5, column=0, sticky="e", pady=(12, 0))
+    ttk.Button(footer, text="Cancelar", command=dialog.destroy).pack(side="left", padx=4)
+    ttk.Button(footer, text="Guardar", command=submit).pack(side="left", padx=4)
     dialog.bind("<Escape>", lambda _event: dialog.destroy())
-    entries["nombre"].focus_set()
+    name_entry.focus_set()
     app["root"].wait_window(dialog)
     return result["value"]
 

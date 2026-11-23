@@ -4,13 +4,14 @@ Aplicación de escritorio multiplataforma, desarrollada en Python y Tkinter, par
 
 ## Funcionalidades
 
-- Mapa visual e interactivo con pantalla, filas y columnas.
-- Selección de varios asientos y reserva con número de entrada.
-- Consulta y liberación de reservas existentes.
+- Mapa visual e interactivo con pantalla, filas y columnas adaptado a salas con distribuci?n variable por fila.
+- Configuraci?n de salas con nombre, pel?cula y filas independientes: cada fila puede tener una cantidad distinta de asientos (por ejemplo, 3 filas delanteras de 20 asientos y 4 filas traseras de 30).
+- Edici?n de la distribuci?n de filas: agregar filas al final, quitar una fila espec?fica y cambiar la cantidad de asientos de una fila existente.
+- Selecci?n de uno o varios asientos y reserva con un mismo n?mero de entrada/ticket.
+- Consulta y liberaci?n de reservas existentes.
 - Panel oscuro con disponibilidad en tiempo real, resumen de sala y registro de actividad.
-- Crear salas y editar película, filas y asientos por fila.
-- Evitar reducciones de sala que eliminarían asientos reservados.
-- Persistencia automática en JSON y validación de los datos al cargar.
+- Persistencia autom?tica en SQLite (`cine_data.db`) con esquema relacional aplicado y validaci?n de datos.
+- Bloqueo de cambios que afecten reservas ocupadas (no se permite quitar una fila reservada ni reducirla dejando fuera asientos ocupados).
 - Ejecutable independiente para Windows mediante PyInstaller.
 
 ## Requisitos
@@ -31,7 +32,7 @@ python -m cine_reservas
 
 En Linux o macOS, activa el entorno con `source .venv/bin/activate`. También puedes iniciar la versión fuente en Windows haciendo doble clic en `ejecutar.bat`.
 
-La aplicación no necesita paquetes de terceros para funcionar desde Python. La primera ejecución crea `cine_data.json` con una sala de ejemplo.
+La aplicaci?n no necesita paquetes de terceros para funcionar desde Python. La primera ejecuci?n crea `cine_data.db` con una sala de ejemplo y el esquema de base de datos aplicado.
 
 La interfaz ofrece las secciones **Asientos**, **Reservas** y **Actividad**. Selecciona uno o varios asientos verdes y confirma la reserva con un número de entrada; ese número se asigna a todos los asientos seleccionados. Los asientos ocupados se identifican en rojo y permiten consultar o liberar la reserva.
 
@@ -61,7 +62,20 @@ Inicia el ejecutable haciendo doble clic o con `ejecutar.bat`.
 
 ## Datos y copias de seguridad
 
-La aplicación guarda salas y reservas en `cine_data.json`, junto al directorio del proyecto en modo fuente o junto al ejecutable dentro de `dist`. El JSON se excluye de Git para no publicar datos locales. Conserva una copia de ese archivo para respaldar las reservas.
+La aplicaci?n guarda la informaci?n en `cine_data.db` (SQLite), junto al directorio del proyecto en modo fuente o junto al ejecutable dentro de `dist`. La base de datos local se excluye de Git para no publicar datos reales. Conserva una copia de ese archivo para respaldar las reservas.
+
+### Esquema de base de datos (DER aplicado)
+
+La persistencia usa SQLite con las siguientes tablas, adaptadas del modelo entidad-relaci?n:
+
+- `salas` (`id_sala` PK, `codigo` UNIQUE, `nombre`, `habilitada`).
+- `peliculas` (`id_pelicula` PK, `titulo`).
+- `filas` (`id_fila` PK, `letra`, `id_sala` FK): cada fila pertenece a una sala y define su propia cantidad de asientos.
+- `asientos` (`id_asiento` PK, `numero`, `id_fila` FK).
+- `funciones` (`id_funcion` PK, `fecha`, `hora_inicio`, `hora_fin`, `estado` PROGRAMADA/FINALIZADA/CANCELADA, `id_sala` FK, `id_pelicula` FK, `id_funcion_origen` FK opcional).
+- `funcion_asientos` (`id_funcion` PK/FK, `id_asiento` PK/FK, `estado` DISPONIBLE/OCUPADO, `ticket`).
+
+Cada sala mantiene su estructura f?sica en `filas` y `asientos` (permitiendo salas no rectangulares), y las reservas de la funci?n activa se registran en `funcion_asientos`.
 
 ## Estructura del proyecto
 
